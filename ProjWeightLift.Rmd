@@ -1,0 +1,160 @@
+---
+title: 'Practical Machine Learning: Weight Lifting Prediction Project'
+output:
+  html_document: default
+  pdf_document: default
+date: "26/12/2017"
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction.
+
+This document describes a predictive model for the Weight Lifting Exercises Dataset, that can be obtained [following this link](http://groupware.les.inf.puc-rio.br/har). The data comes from accelerometers on the belt, forearm, arm, and dumbell of 6 participants that were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+The goal is to fit a predictive model to the provided data in order to predict the manner of weightlifting they did in the exercises measured.
+We will describe the steps taken to train a predictive model.
+
+# Data retrieval and cleansing.
+
+First we load the data for training and validating the model.
+
+```{r}
+pmlData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings = c("NA", ""))
+```
+
+We can have a look to the data by executing `str(pmlData)`.
+At first sight, we can observe that there are several variables which are set to "Factor" but the levels appear to be numeric. With a deep observation of data stored in these variables, we can identify useless variables like `kurtosis_yaw_belt` that contains "#DIV/0!" values. We can also observe that unavailable values are set as `NA`.
+
+### Filter and reduce the dataset.
+
+In the next step, we are going to check the proportion of missing values (`NA`) in all the columns.
+
+```{r}
+proportionOfNAs <- colMeans(is.na(pmlData))
+table(proportionOfNAs)
+```
+
+At this point, we find that there are `r sum(as.logical(proportionOfNAs))` columns in which `r paste0(round(max(proportionOfNAs) * 100, 2), "%")` are missing (it represents almost all values present in the column).
+A column containing a large number of `NA` is not so useful for training our model, so these columns will be removed from the dataset and we will only use columns without `NA` values.
+
+```{r}
+# Indexes of columns without NA values.
+indexes <- !proportionOfNAs
+
+# New dataset with columns without NA values.
+pmlDataValid <- pmlData[indexes]
+```
+
+In addition, there are other columns that can be removed because they contain unnecessary data for our prediction purpouse and will not predict anything. These columns are:
+
+- `X` - row numbers.
+- `user_name` - name of the user.
+- `raw_timestamp_part_1` - timestamp column.
+- `raw_timestamp_part_2` - timestamp column. 
+- `cvtd_timestamp` - timestamp column.
+- `new_window` - data not related to sensor measures.
+- `num_window` - data not related to sensor measures.
+
+```{r}
+# Indexes of columns not containing sensor measurement data.
+indexes <- grep("^X$|user_name|timestamp|window", names(pmlDataValid))
+
+# Final dataset without these columns .
+pmlDataValid2 <- pmlDataValid[-indexes]
+```
+
+
+### Data preparation for training.
+
+We will use the function `createDataPartition` of the `caret` package to split the data into a training and a cross-validation data set, wich will give a 70% of data to the training set.
+This dataset contains the outcome column `classe` and `r ncol(pmlDataValid2) - 1L` feature columns.
+
+```{r message=FALSE, warning=FALSE}
+library(caret)
+set.seed(20102017)
+```
+```{r}
+indexTraining <- createDataPartition(y = pmlDataValid2$classe, p = 0.7, list = FALSE)
+```
+
+As a result of the function `createDataPartition` we obtain the index `indexTraining` that will determine the rows used to split the data in training and cross-validation
+
+```{r}
+training <- pmlDataValid2[indexTraining, ]
+
+# Number of rows in the training dataset.
+nrow(training)
+
+crossValidation <- pmlDataValid2[-indexTraining, ]
+
+# Number of rows in the cross-validation dataset.
+nrow(crossValidation)
+```
+
+# Train the selected model.
+
+After doing several tests with different predictive models, using bootstrapping and cross-validation, the **random-forest** technique obtained a good performance, presenting and accuracy round to 99% during cross-validation tests with the dataset generated for that purpose starting from the filtered dataset (pmlDataValid2).
+
+The obtained model with the shortest training time is calculated in the next lines.
+
+```{r message=FALSE, warning=FALSE}
+library(randomForest)
+```
+
+```{r}
+trControl <- trainControl(method = "cv", number = 2, verboseIter = TRUE)
+modelFit <- train(classe ~ ., data = training, method = "rf", prox = TRUE, trControl = trControl)
+```
+
+# Evaluate the model.
+
+Using the predictive model created against the cross-validation dataset, we will predict the outcome.
+
+```{r}
+ourPrediction <- predict(modelFit, newdata = crossValidation)
+```
+
+Finally, we will use the function `confusionMatrix` in order to calculate the accuracy of our prediction comparing with the cross-validation dataset values.
+
+```{r}
+confusionMat <- confusionMatrix(ourPrediction, reference = crossValidation$classe)
+accuracy <- confusionMat$overall["Accuracy"]
+accuracy
+```
+
+The accuracy of the predictive model is `r paste0(round(accuracy * 100, 2), "%")`.
+Consecuently, the *out-of-sample error* is `r paste0(round(100 - accuracy * 100, 2), "%")`.
+
+### Variable influence in the model.
+
+The next list represents the variables that have more influence in the model and their relative importance values are also reflected.
+
+```{r}
+variableImportance <- varImp(modelFit)$importance
+variableImportance[head(order(unlist(variableImportance), decreasing = TRUE), 10L), , drop = FALSE]
+```
+
+
+### Prediction of 20 test cases
+
+To complete the assignment, we will test our model with the propossed file that contains 20 measured records. The execution of the next commands will produce the prediction for every row.
+
+```{r}
+pmlDataTest <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings = c("NA", ""))
+
+ourTestPrediction <- predict(modelFit, newdata = pmlDataTest)
+
+ourTestPrediction
+```
+
+
+***************************************************************************
+
+#### About the data
+
+The data used in this assignment has been published:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/har#ixzz34irPKNuZ). *Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)*. Stuttgart, Germany: ACM SIGCHI, 2013.
